@@ -4,3 +4,4 @@ Name,Quantity,Component
 "R1, R2",2,"1 kohm Resistor "
 "Rpot1, Rpot2",2,"1000 kOhm,  Potentiometer "
 "S1, S2",2," Pushbutton "
+"U2",1," Inverting Schmitt Trigger [74HC14] "
