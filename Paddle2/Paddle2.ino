@@ -307,7 +307,7 @@ void loop()
     doing a sleep(2ms) should make us ready for the next
     analogue read.
     
-    Why all that math? Well, do read both paddles:
+    Why all that math? Well, to read both paddles:
     - wait for cap to charge  (2ms)
     - read A
     - wait to discharge (1/3) (2ms)
