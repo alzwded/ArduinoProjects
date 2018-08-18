@@ -7,7 +7,7 @@
 
   D7 -- X1 -- GND
 
-  C1 = C2 = 4.7n
+  C1 = C2 = 2.2n
   R1 = R2 = 1k
 
   Paddle controller:
@@ -37,11 +37,18 @@
 
 */
 
+// toggle between debug dump and actual device
 #define SERIAL_DUMP 1
 #define HID_DEVICE 2
 #define OUTPUT SERIAL_DUMP
 
-// cycles to wait between pot reads
+// time the math done when printing values
+//#define SERIAL_TIMING
+// time how long a loop takes; 
+// disable other delay calls and sleeps for half a second each loop
+//#define LOOP_TIMING
+
+// loops to wait between pot reads
 // it can take a long time to discharge the pot
 static const byte magic = 2;
 // two pots => double that
@@ -52,24 +59,35 @@ static const byte paddlePins[2] = { A0, A1 };
 static const byte buttonPins[2] = {  4,  7 };
 
 static const int overhead[3] = { 
-  51,       /* low overhead;  ~5% */
-  51,       /* high overhead; ~5% */
-  +30,      /* nudge it to the left a bit */
+  22,       /* low overhead;  ~5% */
+  22,       /* high overhead; ~5% */
+  +16,      /* nudge it to the left a bit */
 };
 
-byte rd; /* state (read analogue?) */
+int paddles[2], mins[2], maxs[2]; /* paddle state, 16bit */
+/* Loop counter
+   0 - serial send
+   1 - read pot A
+   2 - serial send
+   3 - read pot B
+ */
+byte rd;
 /* button state
    bit0   paddle left
    bit1   paddle right
    bit7   started acting as HID device
+
+   I'd keep this as a global register allocation
+   but arduino ide and gcc do weird things and
+   end up dumping function definitions in front
+   which break global register linking. 
+   So... keep it here as a global variable (pff slow)
 */
 byte buttons; /* button state */
-int paddles[2], mins[2], maxs[2]; /* paddle state */
-register unsigned char started asm("r15");
 
 inline bool Started()
 {
-  return started || (started = buttons);
+  return buttons |= ( (buttons != 0) << 7 );
 }
 
 inline void MyPrint(byte rc)
@@ -157,11 +175,10 @@ void setup()
 
   // state
   rd = 0;
-  started = 0;
   buttons = 0;
   paddles[0] = paddles[1] = 0;
   mins[0] = mins[1] = 100;
-  maxs[0] = maxs[1] = 500;
+  maxs[0] = maxs[1] = 300;
 
   // setup TCNT1
   TCCR1A = 0; // normal mode; no OC, no PWM
@@ -191,15 +208,19 @@ void setup()
 
 void loop()
 {
-  register unsigned char ra asm("r12"); // accumulator
+#ifdef LOOP_TIMING
+  unsigned long ttt = millis();
+#endif
+  register unsigned char ra; // accumulator; never stored to memory so hint it's a register
   
   // increment state
   rd = (rd + 1) % magic2;
 
   // check if it's a cycle where we're reading a pot
-  if (started && (rd % magic)) {
+  if (Started() && (rd % magic)) {
     // prepare for reading pots
-    register unsigned char rb asm("r13"); // index of joystick we're measuring on this cycle
+    // index of joystick we're measuring on this cycle
+    byte rb;
     rb = rd / magic;
     paddles[rb] = 0;
 
@@ -243,18 +264,71 @@ void loop()
   }
 
   // read pushbuttons' state
-  buttons &= 0xFC;
   ra = !digitalRead(buttonPins[0]);
   buttons |= ra << 1;
   ra = !digitalRead(buttonPins[1]);
   buttons |= ra;
-
-  if (Started()) {
+  if (Started() && ((rd % magic) == 0)) {
     // output
     MyPrint(1);
     MyPrint(0);
     Serial.println();
+    
+    // reset button state
+    buttons &= 0xFC;
+    
+#ifndef LOOP_TIMING
+    delay(3);
+#endif
+  } else {
+#ifndef LOOP_TIMING
+    delay(2);
+#endif
   }
+  
+  /*
+    Now, everybody's favourite part: TIMING!
+    
+    Our 1MOhm 2.2nF RC network takes ~2.2ms to charge
+    Actually it only takes *us* 2 ms to charge since we only
+    go 46-48% of the way instead of 67%
+    
+    To discharge the cap, we need to wait 2 * 3 = 6ms or such
+    to get it below 5% charge; which is well enough for us
+    
+    To recap what this loop does:
+    - half of the time it charges the cap
+    - half of the time it supposedly writes to serial
+    
+    Since the moment we're done reading the the timer,
+    we have to waste 6ms or more.
+    
+    Assuming the joystic library is snappy enough,
+    doing a sleep(2ms) should make us ready for the next
+    analogue read.
+    
+    Why all that math? Well, do read both paddles:
+    - wait for cap to charge  (2ms)
+    - read A
+    - wait to discharge (1/3) (2ms)
+    - write output (2/3)      (~1ms)
+    - wait to discharge (3/3) (3ms)
+    - wait for cap to charge  (2ms)
+    - read B
+    - wait to discharge (1/3) (2ms)
+    - write output (2/3)      (~1ms)
+    - wait to discharge (3/3) (3ms)
+    
+    That's 8*~2 = 16ms. 17ms is our target 60Hz. W00T!
+    
+    And technically it goes faster when the paddles are turned
+    right since the cap charges super fast in that case.
+  */
+  
+#ifdef LOOP_TIMING
+  Serial.print(millis() - ttt); Serial.print("ms  ");
+  Serial.print(rd); Serial.println();
+  delay(500); // debug
+#endif
 
-  delay(5); // Wait for 5ms; roughly enough to discharge cap (-ish); discharge enough, that is
 }
