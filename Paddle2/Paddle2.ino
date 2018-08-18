@@ -51,35 +51,77 @@ static const byte magic2 = magic * 2;
 static const byte paddlePins[2] = { A0, A1 };
 static const byte buttonPins[2] = {  4,  7 };
 
+static const int overhead[3] = { 
+  51,       /* low overhead;  ~5% */
+  51,       /* high overhead; ~5% */
+  +30,      /* nudge it to the left a bit */
+};
+
 byte rd; /* state (read analogue?) */
-byte started; /* started writing to USB */
+/* button state
+   bit0   paddle left
+   bit1   paddle right
+   bit7   started acting as HID device
+*/
 byte buttons; /* button state */
 int paddles[2], mins[2], maxs[2]; /* paddle state */
+register unsigned char started asm("r15");
+
+inline bool Started()
+{
+  return started || (started = buttons);
+}
 
 inline void MyPrint(byte rc)
 {
 #if OUTPUT == SERIAL_DUMP
+# ifdef SERIAL_TIMING
+  unsigned long ttt = micros();
+# else
   Serial.print(paddles[rc]); Serial.print('|');
+# endif
 #elif OUTPUT == HID_DEVICE
 #else
 # error "OUTPUT mode not defined"
 #endif
-  // use FPU real quick for better math
-  // normalize values from 0-1023
-  float f = (paddles[rc] - mins[rc]);
-  f /= (maxs[rc] - mins[rc]);
-  f *= 1023;
-  // we should be between 0-1023
-  int r16 = (int)f;
-  r16 &= 0x03FF;
-
-  // TODO clamp from 10-1013, i.e. add a dead zone at the edges
+  // compute analog joystick range 0-1023
+  
+  // clamp from 10-1013, i.e. add a dead zone at the edges
   // ...or something like that. Basically give us a buffer
-  // for when they start going bad
+  int pvalue = paddles[rc] + overhead[2];
+  if(pvalue < overhead[0] + mins[rc]) pvalue = mins[rc] + overhead[0];
+  if(pvalue > maxs[rc] - overhead[1]) pvalue = maxs[rc] - overhead[1];
+  pvalue -= mins[rc] + overhead[0];
+  
+#if 0
+  Serial.print(pvalue);
+  Serial.print("|");
+  Serial.print(maxs[rc] - mins[rc]);
+  Serial.print("|");
+  Serial.print(overhead[1] + overhead[0]);
+#endif
+  
+  // use FPU real quick for better math
+  // normalize values to 0-1023
+  float f = pvalue;
+  f /= (maxs[rc] - mins[rc] - overhead[1] - overhead[0]);
+  f *= 1023;
+  // round; we should be between 0-1023
+  f += 0.5;
+  int r16 = (int)f;
+  // make sure we're actually between 0-1023
+  r16 &= 0x03FF;
 
   // TODO rolling average to alleviate glitches.
   // i.e. add a low pass filter on the values.
   // we still have memory and cycles, right?
+  
+#if OUTPUT == SERIAL_DUMP
+# ifdef SERIAL_TIMING
+  Serial.print(micros() - ttt);
+  Serial.print("us\t");
+# endif
+#endif
 
 #if OUTPUT == SERIAL_DUMP
   static char buffer[] = "0000?\t";
@@ -114,12 +156,12 @@ void setup()
   }
 
   // state
+  rd = 0;
+  started = 0;
   buttons = 0;
   paddles[0] = paddles[1] = 0;
-  mins[0] = mins[1] = 10;
-  maxs[0] = maxs[1] = 190;
-  // only start acting as a HID device after pushing a button
-  started = 0;
+  mins[0] = mins[1] = 100;
+  maxs[0] = maxs[1] = 500;
 
   // setup TCNT1
   TCCR1A = 0; // normal mode; no OC, no PWM
@@ -155,7 +197,7 @@ void loop()
   rd = (rd + 1) % magic2;
 
   // check if it's a cycle where we're reading a pot
-  if (rd % magic) {
+  if (started && (rd % magic)) {
     // prepare for reading pots
     register unsigned char rb asm("r13"); // index of joystick we're measuring on this cycle
     rb = rd / magic;
@@ -201,16 +243,16 @@ void loop()
   }
 
   // read pushbuttons' state
-  buttons = 0;
+  buttons &= 0xFC;
   ra = !digitalRead(buttonPins[0]);
   buttons |= ra << 1;
   ra = !digitalRead(buttonPins[1]);
   buttons |= ra;
 
-  if (started = (started || buttons)) {
+  if (Started()) {
     // output
-    MyPrint(0);
     MyPrint(1);
+    MyPrint(0);
     Serial.println();
   }
 
