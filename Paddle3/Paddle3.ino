@@ -38,6 +38,8 @@
 
 */
 
+#include <avr/wdt.h>
+
 // toggle between debug dump and actual device
 #define SERIAL_DUMP 1
 #define HID_DEVICE 2
@@ -70,6 +72,8 @@ static const int overhead[3] = {
 // bit1 - paddle A
 // bit0 - paddle B
 volatile byte triggered;
+// paddles which were encountered
+volatile byte encountered;
 // interrupt writes here; 
 // we could use paddles[] directly, but we want
 // to do that only after a button was pressed
@@ -188,7 +192,7 @@ inline void MyPrint(byte rc)
 }
 
 void setup()
-{
+{ 
   // trigger for RC networks
   pinMode(powerPin, OUTPUT);
   digitalWrite(powerPin, LOW);
@@ -203,6 +207,9 @@ void setup()
   paddles[0] = paddles[1] = 0;
   mins[0] = mins[1] = 100;
   maxs[0] = maxs[1] = 300;
+
+  triggered = 0;
+  encountered = 0;
   
   // attach faaling edge interrupt on the paddle pins
   // schmitt trigger keeps pins high until the rc network
@@ -268,7 +275,7 @@ void loop()
     digitalWrite(powerPin, HIGH);
     // loop
     // TODO allow only one paddle to be connected
-    while(triggered != 0x3);
+    while(triggered != encountered);
     // cool, now ground the caps
     digitalWrite(powerPin, LOW);
     // the timer can keep running, I don't care
@@ -300,10 +307,13 @@ void loop()
     digitalWrite(powerPin, HIGH);
     delay(LOOP_DELTA/4);
     digitalWrite(powerPin, LOW);
-    delay(LOOP_DELTA - LOOP_DELTA/4);
+    delay(LOOP_DELTA);
+    // remember which paddles were encountered, if any
+    // technically if none are encountered, there's no way
+    // Started() will ever return true
+    encountered = triggered;
 #endif
   }
-  
   
   /*
     Now, everybody's favourite part: TIMING!
