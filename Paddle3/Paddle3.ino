@@ -38,8 +38,6 @@
 
 */
 
-#include <avr/wdt.h>
-
 // toggle between debug dump and actual device
 #define SERIAL_DUMP 1
 #define HID_DEVICE 2
