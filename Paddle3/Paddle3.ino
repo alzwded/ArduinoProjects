@@ -267,6 +267,7 @@ void loop()
     // start charging the cap
     digitalWrite(powerPin, HIGH);
     // loop
+    // TODO allow only one paddle to be connected
     while(triggered != 0x3);
     // cool, now ground the caps
     digitalWrite(powerPin, LOW);
@@ -332,5 +333,4 @@ void loop()
   Serial.print(millis() - ttt); Serial.print("ms\n");
   delay(500); // debug
 #endif
-
 }
