@@ -303,13 +303,14 @@ void loop()
     // flip the power on and off on the RC networks
     // to get them used to oscillating :-)
     digitalWrite(powerPin, HIGH);
-    delay(LOOP_DELTA/4);
+    delay(LOOP_DELTA/3+1);
     digitalWrite(powerPin, LOW);
-    delay(LOOP_DELTA);
-    // remember which paddles were encountered, if any
+    delay(LOOP_DELTA-1);
+    // remember which paddles were encountered, if any;
     // technically if none are encountered, there's no way
     // Started() will ever return true
     encountered = triggered;
+    //Serial.print(encountered); Serial.println();
 #endif
   }
   
