@@ -1,14 +1,15 @@
 /*
-  D2 -------- POT -x
-              |
-  A0 -- R1 -- C1
-              |
-  GND --------+
+  D5 -------------- POT -x
+                    |
+  D2 -- S1 -- R1 -- C1
+                    |
+  GND --------------+
 
   D7 -- X1 -- GND
 
-  C1 = C2 = 2.2n
+  C1 = C2 = 4.7n
   R1 = R2 = 1k
+  S1 = 74HC14
 
   Paddle controller:
   POT = 1M
@@ -22,11 +23,11 @@
                            -> PORT2
   D7 --                    -> PORT3
   D4 --                    -> PORT4
-  A1 -- R2 -- S12 -- C2 -- -> PORT5
+  D2 -- R2 -- S12 -- C2 -- -> PORT5
                            -> PORT6
-  D2 --                    -> PORT7
+  D5 --                    -> PORT7
   GND -                    -> PORT8
-  A0 -- R1 -- S12 -- C1 -- -> PORT9
+  D3 -- R1 -- S12 -- C1 -- -> PORT9
 
   C1 -- GND
   C2 -- GND
@@ -50,11 +51,9 @@
 
 // apply a simple low pass filter
 #define LOWPASS
-#ifdef LOWPASS
-static const float LOWPASS_B = 0.9;
-#endif
 
-static const int LOOP_DELTA = 15;
+// time to sleep at end of loop
+static const int LOOP_DELTA = 12;
 
 // paddle pin mapping
 static const byte paddlePins[2] = {  2,  3 };
@@ -67,12 +66,19 @@ static const int overhead[3] = {
   +26,      /* nudge it to the left a bit */
 };
 
+// trigger bitfield set by interrupts
+// bit1 - paddle A
+// bit0 - paddle B
 volatile byte triggered;
-volatile int paddlesTmp[2]; /* paddle values, 16 bit */
+// interrupt writes here; 
+// we could use paddles[] directly, but we want
+// to do that only after a button was pressed
+volatile int paddlesTmp[2];
 int paddles[2], mins[2], maxs[2]; /* paddle state, 16bit */
-static const int NHistory = 2;
 #ifdef LOWPASS
+// history-based low pass filter
 float histories[2];
+static const float LOWPASS_B = 0.9;
 #endif
 
 /* button state
@@ -188,7 +194,7 @@ void setup()
   digitalWrite(powerPin, LOW);
   // intialize paddle pins
   for (register unsigned char rc = 0; rc < 2; ++rc) {
-    pinMode(paddlePins[rc], INPUT);
+    pinMode(paddlePins[rc], INPUT_PULLUP);
     pinMode(buttonPins[rc], INPUT_PULLUP);
   }
 
@@ -198,7 +204,9 @@ void setup()
   mins[0] = mins[1] = 100;
   maxs[0] = maxs[1] = 300;
   
-  // attach interrupt
+  // attach faaling edge interrupt on the paddle pins
+  // schmitt trigger keeps pins high until the rc network
+  // rises to ~2.4V when it drops low
   attachInterrupt(digitalPinToInterrupt(paddlePins[0]), Paddle1Charged, FALLING);
   attachInterrupt(digitalPinToInterrupt(paddlePins[1]), Paddle2Charged, FALLING);
 
@@ -235,14 +243,13 @@ void loop()
 #endif
   register unsigned char ra; // accumulator; never stored to memory so hint it's a register
   
-    
   // read pushbuttons' state
   ra = !digitalRead(buttonPins[0]);
   buttons |= ra << 1;
   ra = !digitalRead(buttonPins[1]);
   buttons |= ra;
 
-  // check if it's a cycle where we're reading a pot
+  // check if we've been enabled
   if (Started()) {
     // prepare for reading pots
     paddles[0] = paddles[1] = 0;
@@ -264,6 +271,7 @@ void loop()
     // cool, now ground the caps
     digitalWrite(powerPin, LOW);
     // the timer can keep running, I don't care
+    // let's store the timing on the paddles
     paddles[0] = paddlesTmp[0];
     paddles[1] = paddlesTmp[1];
 
@@ -274,8 +282,8 @@ void loop()
     }
     
     // output
-    MyPrint(1);
     MyPrint(0);
+    MyPrint(1);
     Serial.println();
     
     // reset button state
@@ -286,6 +294,8 @@ void loop()
 #endif  
   } else {
 #ifndef LOOP_TIMING;
+    // flip the power on and off on the RC networks
+    // to get them used to oscillating :-)
     digitalWrite(powerPin, HIGH);
     delay(LOOP_DELTA/4);
     digitalWrite(powerPin, LOW);
@@ -297,40 +307,25 @@ void loop()
   /*
     Now, everybody's favourite part: TIMING!
     
-    Our 1MOhm 2.2nF RC network takes ~2.2ms to charge
-    Actually it only takes *us* 2 ms to charge since we only
+    Our 1MOhm 4.7nF RC network takes ~4.7ms to charge
+    Actually it only takes *us* ~4 ms to charge since we only
     go 46-48% of the way instead of 67%
     
-    To discharge the cap, we need to wait 2 * 3 = 6ms or such
+    To discharge the cap, we need to wait 4 * 3 =~ 12ms or such
     to get it below 5% charge; which is well enough for us
     
     To recap what this loop does:
-    - half of the time it charges the cap
-    - half of the time it supposedly writes to serial
+    - a quarter of the time it charges the cap
+    - the rest of the time is spent writing to serial and waiting
     
     Since the moment we're done reading the the timer,
-    we have to waste 6ms or more.
-    
-    Assuming the joystic library is snappy enough,
-    doing a sleep(2ms) should make us ready for the next
-    analogue read.
-    
-    Why all that math? Well, do read both paddles:
-    - wait for cap to charge  (2ms)
-    - read A
-    - wait to discharge (1/3) (2ms)
-    - write output (2/3)      (~1ms)
-    - wait to discharge (3/3) (3ms)
-    - wait for cap to charge  (2ms)
-    - read B
-    - wait to discharge (1/3) (2ms)
-    - write output (2/3)      (~1ms)
-    - wait to discharge (3/3) (3ms)
-    
-    That's 8*~2 = 16ms. 17ms is our target 60Hz. W00T!
-    
-    And technically it goes faster when the paddles are turned
-    right since the cap charges super fast in that case.
+    we have to waste 12ms or more.
+        
+    Why mention all of this? 4ms to charge caps + 1-2ms
+    for serial communication + 12ms of sleep puts us at
+    max 18ms per loop (and much better when the pots are
+    turned right). ~17ms is enough for 60Hz snappiness.
+    W00T!
   */
   
 #ifdef LOOP_TIMING
