@@ -1,0 +1,10 @@
+Name,Quantity,Component
+"U1",1," Arduino Uno R3 "
+"C1, C2",2,"4.7 nF Capacitor "
+"R1, R2",2,"1 kohm Resistor "
+"Rpot1, Rpot2",2,"1000 kOhm,  Potentiometer "
+"S1, S2",2," Pushbutton "
+"U2",1," Inverting Schmitt Trigger [74HC14] "
+"R3, R5",2,"220 ohm Resistor "
+"R4, R6",2,"10 kohm Resistor "
+"U3",1,"4 ms Oscilloscope scope"
